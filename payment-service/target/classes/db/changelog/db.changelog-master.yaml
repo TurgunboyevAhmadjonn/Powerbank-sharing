@@ -1,0 +1,28 @@
+databaseChangeLog:
+  - changeSet:
+      id: 1-create-cards-and-payments-tables
+      author: ahmadjon
+      changes:
+        - sql:
+            dbms: postgresql
+            endDelimiter: ";"
+            sql: >
+              CREATE TABLE cards (
+                  id UUID PRIMARY KEY,
+                  user_id UUID NOT NULL,
+                  card_number VARCHAR(255) NOT NULL UNIQUE,
+                  balance NUMERIC(19, 2) NOT NULL
+              );
+
+              CREATE TABLE payments (
+                  id UUID PRIMARY KEY,
+                  idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+                  card_id UUID NOT NULL REFERENCES cards(id),
+                  amount NUMERIC(19, 2) NOT NULL,
+                  status VARCHAR(50) NOT NULL,
+                  created_at TIMESTAMPTZ NOT NULL
+              );
+
+              -- Index for fast lookup on card history and idempotency checks
+              CREATE INDEX idx_payments_card_id ON payments(card_id);
+              CREATE INDEX idx_payments_idempotency_key ON payments(idempotency_key);
