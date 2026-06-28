@@ -1,10 +1,10 @@
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/repository/SlotRepository.java
+/home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/entity/Slot.java
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/repository/PowerBankRepository.java
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/grpc/StationGrpcService.java
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/target/generated-sources/protobuf/java/com/anor/station/grpc/StationProto.java
-/home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/domain/PowerBank.java
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/target/generated-sources/protobuf/java/com/anor/station/grpc/SlotInfoOrBuilder.java
-/home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/domain/Slot.java
+/home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/entity/PowerBank.java
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/event/StationEvent.java
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/event/DispenseCommand.java
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/target/generated-sources/protobuf/grpc-java/com/anor/station/grpc/StationServiceGrpc.java
@@ -29,5 +29,5 @@
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/repository/StationRepository.java
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/target/generated-sources/protobuf/java/com/anor/station/grpc/StationListOrBuilder.java
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/target/generated-sources/protobuf/java/com/anor/station/grpc/StationSummaryOrBuilder.java
-/home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/domain/Station.java
+/home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/src/main/java/com/anor/station/entity/Station.java
 /home/runner/work/Powerbank-sharing/Powerbank-sharing/station-service/target/generated-sources/protobuf/java/com/anor/station/grpc/NearbyRequest.java
