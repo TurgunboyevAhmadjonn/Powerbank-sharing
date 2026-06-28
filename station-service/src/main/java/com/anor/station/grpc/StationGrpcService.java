@@ -1,8 +1,7 @@
 package com.anor.station.grpc;
 
-import com.anor.station.entity.Station;
-import com.anor.station.entity.Slot;
-import com.anor.station.grpc.proto.*;
+import com.anor.station.domain.Slot;
+import com.anor.station.domain.Station;
 import com.anor.station.repository.SlotRepository;
 import com.anor.station.repository.StationRepository;
 import io.grpc.Status;
@@ -17,39 +16,39 @@ import java.util.UUID;
 @Slf4j
 @GrpcService
 @RequiredArgsConstructor
-public class StationGrpcService extends StationGrpcServiceGrpc.StationGrpcServiceImplBase {
+public class StationGrpcService extends StationServiceGrpc.StationServiceImplBase {
 
     private final StationRepository stationRepository;
-    private final SlotRepository    slotRepository;
+    private final SlotRepository slotRepository;
 
     @Override
-    public void getNearestStations(GetNearestStationsRequest request,
-                                   StreamObserver<GetNearestStationsResponse> responseObserver) {
+    public void listNearbyStations(NearbyRequest request,
+                                   StreamObserver<StationList> responseObserver) {
         try {
-            int radius = request.getRadiusMeters() > 0 ? request.getRadiusMeters() : 5000;
-            int limit  = request.getLimit()        > 0 ? request.getLimit()        : 20;
+            int radius = request.getRadiusMeters() > 0 ? (int) request.getRadiusMeters() : 5000;
+            int limit = 20;
 
             List<Station> stations = stationRepository.findNearestStations(
-                    request.getLatitude(), request.getLongitude(), radius, limit);
+                    request.getLat(), request.getLng(), radius, limit);
 
-            List<StationDto> dtos = stations.stream()
-                    .map(this::toStationDto)
+            List<StationSummary> summaries = stations.stream()
+                    .map(this::toStationSummary)
                     .toList();
 
-            responseObserver.onNext(GetNearestStationsResponse.newBuilder()
-                    .addAllStations(dtos)
+            responseObserver.onNext(StationList.newBuilder()
+                    .addAllStations(summaries)
                     .build());
             responseObserver.onCompleted();
 
         } catch (Exception e) {
-            log.error("getNearestStations failed", e);
+            log.error("listNearbyStations failed", e);
             responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
         }
     }
 
     @Override
-    public void getStationById(GetStationByIdRequest request,
-                               StreamObserver<GetStationByIdResponse> responseObserver) {
+    public void getStation(StationIdRequest request,
+                           StreamObserver<StationDetails> responseObserver) {
         try {
             UUID id = UUID.fromString(request.getStationId());
 
@@ -58,47 +57,60 @@ public class StationGrpcService extends StationGrpcServiceGrpc.StationGrpcServic
                             .withDescription("Station not found: " + id)
                             .asRuntimeException());
 
-            List<SlotDto> slotDtos = slotRepository.findByStationId(id).stream()
-                    .map(this::toSlotDto)
+            List<SlotInfo> slotInfos = slotRepository.findByStationId(id).stream()
+                    .map(this::toSlotInfo)
                     .toList();
 
-            responseObserver.onNext(GetStationByIdResponse.newBuilder()
-                    .setStation(toStationDto(station))
-                    .addAllSlots(slotDtos)
+            responseObserver.onNext(StationDetails.newBuilder()
+                    .setId(station.getId().toString())
+                    .setName(nvl(station.getName()))
+                    .setLat(station.getLat())
+                    .setLng(station.getLng())
+                    .setStatus(station.getStatus() == null ? "" : station.getStatus().name())
+                    .setTotalSlots(station.getTotalSlots())
+                    .addAllSlots(slotInfos)
                     .build());
             responseObserver.onCompleted();
 
+        } catch (IllegalArgumentException e) {
+            responseObserver.onError(Status.INVALID_ARGUMENT.withDescription("Invalid station_id UUID").asRuntimeException());
+        } catch (RuntimeException e) {
+            responseObserver.onError(e);
         } catch (Exception e) {
-            log.error("getStationById failed", e);
+            log.error("getStation failed", e);
             responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
         }
     }
 
-    // ── Mappers ──────────────────────────────────────────────────────────────
+    private StationSummary toStationSummary(Station station) {
+        int totalSlots = station.getTotalSlots();
+        int freeSlots = 0;
+        int availablePowerBanks = Math.max(totalSlots - freeSlots, 0);
 
-    private StationDto toStationDto(Station s) {
-        return StationDto.newBuilder()
-                .setId(s.getId().toString())
-                .setName(s.getName())
-                .setAddress(s.getAddress())
-                .setLatitude(s.getLatitude())
-                .setLongitude(s.getLongitude())
-                .setAvailableSlots(s.getAvailableSlots())
-                .setTotalSlots(s.getTotalSlots())
-                .setStatus(s.getStatus())
+        return StationSummary.newBuilder()
+                .setId(station.getId().toString())
+                .setName(nvl(station.getName()))
+                .setLat(station.getLat())
+                .setLng(station.getLng())
+                .setAvailablePowerBanks(availablePowerBanks)
+                .setFreeSlots(freeSlots)
+                .setDistanceMeters(0)
                 .build();
     }
 
-    private SlotDto toSlotDto(Slot slot) {
-        SlotDto.Builder builder = SlotDto.newBuilder()
-                .setId(slot.getId().toString())
+    private SlotInfo toSlotInfo(Slot slot) {
+        SlotInfo.Builder builder = SlotInfo.newBuilder()
                 .setSlotNumber(slot.getSlotNumber())
-                .setStatus(slot.getStatus());
+                .setStatus(slot.getStatus() == null ? "" : slot.getStatus().name());
 
         if (slot.getPowerBank() != null) {
-            builder.setPowerbankId(slot.getPowerBank().getId().toString());
-            builder.setBatteryLevel(slot.getPowerBank().getBatteryLevel());
+            builder.setPowerBankId(slot.getPowerBank().getId().toString());
+            builder.setChargeLevel(slot.getPowerBank().getChargeLevel());
         }
         return builder.build();
+    }
+
+    private String nvl(String value) {
+        return value == null ? "" : value;
     }
 }
