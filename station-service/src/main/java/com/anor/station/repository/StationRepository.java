@@ -1,6 +1,6 @@
 package com.anor.station.repository;
 
-import com.anor.station.entity.Station;
+import com.anor.station.domain.Station;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -15,16 +15,16 @@ public interface StationRepository extends JpaRepository<Station, UUID> {
     @Query(value = """
         SELECT s.*,
                (6371000 * acos(
-                   cos(radians(:lat)) * cos(radians(s.latitude)) *
-                   cos(radians(s.longitude) - radians(:lng)) +
-                   sin(radians(:lat)) * sin(radians(s.latitude))
+                   cos(radians(:lat)) * cos(radians(s.lat)) *
+                   cos(radians(s.lng) - radians(:lng)) +
+                   sin(radians(:lat)) * sin(radians(s.lat))
                )) AS distance
-        FROM stations s
-        WHERE s.status = 'ACTIVE'
+        FROM station s
+        WHERE s.status = 'ONLINE'
           AND (6371000 * acos(
-                   cos(radians(:lat)) * cos(radians(s.latitude)) *
-                   cos(radians(s.longitude) - radians(:lng)) +
-                   sin(radians(:lat)) * sin(radians(s.latitude))
+                   cos(radians(:lat)) * cos(radians(s.lat)) *
+                   cos(radians(s.lng) - radians(:lng)) +
+                   sin(radians(:lat)) * sin(radians(s.lat))
                )) <= :radiusMeters
         ORDER BY distance ASC
         LIMIT :limit
