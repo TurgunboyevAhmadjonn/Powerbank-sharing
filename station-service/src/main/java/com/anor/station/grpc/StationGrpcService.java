@@ -1,7 +1,7 @@
 package com.anor.station.grpc;
 
-import com.anor.station.domain.Slot;
-import com.anor.station.domain.Station;
+import com.anor.station.entity.Slot;
+import com.anor.station.entity.Station;
 import com.anor.station.repository.SlotRepository;
 import com.anor.station.repository.StationRepository;
 import io.grpc.Status;

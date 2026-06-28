@@ -1,5 +1,6 @@
-package com.anor.station.domain;
+package com.anor.station.entity;
 
+import com.anor.station.domain.PowerBankStatus;
 import jakarta.persistence.*;
 import lombok.*;
 import java.util.UUID;
@@ -26,4 +27,3 @@ public class PowerBank {
     @Version
     private long version; // optimistic lock guards concurrent dispense
 }
-

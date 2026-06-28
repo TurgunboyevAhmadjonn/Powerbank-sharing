@@ -1,6 +1,6 @@
 package com.anor.station.repository;
 
-import com.anor.station.domain.*;
+import com.anor.station.entity.Slot;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.*;
 import org.springframework.data.repository.query.Param;
@@ -34,4 +34,3 @@ public interface SlotRepository extends JpaRepository<Slot, UUID> {
         """)
     List<Slot> lockEmptySlots(@Param("stationId") UUID stationId);
 }
-
