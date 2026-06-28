@@ -1,0 +1,134 @@
+// src/main/proto/rental.proto
+syntax = "proto3";
+
+package rental;
+
+option java_multiple_files = true;
+option java_package = "com.anor.rental.grpc.proto";
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+service RentalService {
+
+  rpc CreateRental(CreateRentalRequest) returns (RentalResponse) {
+    option (google.api.http) = {
+      post: "/v1/rental"
+      body: "*"
+    };
+  }
+
+  rpc GetRentalStatus(GetRentalStatusRequest) returns (RentalResponse) {
+    option (google.api.http) = {
+      get: "/v1/rental/{rental_id}/status"
+    };
+  }
+
+  rpc GetRentalHistory(GetRentalHistoryRequest) returns (RentalHistoryResponse) {
+    option (google.api.http) = {
+      get: "/v1/rental/history"
+    };
+  }
+
+  rpc FinishRental(FinishRentalRequest) returns (RentalResponse) {
+    option (google.api.http) = {
+      post: "/v1/rental/finish"
+      body: "*"
+    };
+  }
+
+  rpc GetNearbyStations(GetNearbyStationsRequest) returns (StationListResponse) {
+    option (google.api.http) = {
+      get: "/v1/stations"
+    };
+  }
+
+  rpc GetStationDetails(GetStationDetailsRequest) returns (StationDetailsResponse) {
+    option (google.api.http) = {
+      get: "/v1/stations/{station_id}"
+    };
+  }
+}
+
+// ── Rental messages ───────────────────────────────────────────
+
+message CreateRentalRequest {
+  string station_id      = 1;
+  string slot_id         = 2;
+  string user_id         = 3;
+  string card_id         = 4;
+  string idempotency_key = 5;
+}
+
+message GetRentalStatusRequest {
+  string rental_id = 1;
+}
+
+message GetRentalHistoryRequest {
+  string user_id = 1;
+  int32  page    = 2;
+  int32  size    = 3;
+}
+
+message FinishRentalRequest {
+  string rental_id   = 1;
+  string station_id  = 2;
+  string slot_id     = 3;
+}
+
+message RentalResponse {
+  string                    rental_id   = 1;
+  string                    user_id     = 2;
+  string                    station_id  = 3;
+  string                    powerbank_id = 4;
+  string                    status      = 5;
+  google.protobuf.Timestamp started_at  = 6;
+  google.protobuf.Timestamp finished_at = 7;
+  string                    total_cost  = 8;
+}
+
+message RentalHistoryResponse {
+  repeated RentalResponse rentals     = 1;
+  int32                   total_count = 2;
+  int32                   page        = 3;
+  int32                   size        = 4;
+}
+
+// ── Station proxy messages ────────────────────────────────────
+
+message GetNearbyStationsRequest {
+  double latitude  = 1;
+  double longitude = 2;
+  double radius_km = 3;
+}
+
+message GetStationDetailsRequest {
+  string station_id = 1;
+}
+
+message StationListResponse {
+  repeated StationSummary stations = 1;
+}
+
+message StationSummary {
+  string station_id        = 1;
+  string name              = 2;
+  double latitude          = 3;
+  double longitude         = 4;
+  int32  available_slots   = 5;
+  int32  total_slots       = 6;
+}
+
+message StationDetailsResponse {
+  string               station_id = 1;
+  string               name       = 2;
+  double               latitude   = 3;
+  double               longitude  = 4;
+  repeated SlotInfo    slots      = 5;
+}
+
+message SlotInfo {
+  string slot_id      = 1;
+  bool   is_occupied  = 2;
+  string powerbank_id = 3;
+}

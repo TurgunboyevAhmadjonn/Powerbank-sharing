@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- src/main/resources/db/changelog/db.changelog-master.xml -->
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.24.xsd">
+
+    <include file="migrations/V001__create_rentals.sql"
+             relativeToChangelogFile="true"/>
+    <include file="migrations/V002__create_idempotency_keys.sql"
+             relativeToChangelogFile="true"/>
+    <include file="migrations/V003__create_recurring_payments.sql"
+             relativeToChangelogFile="true"/>
+
+</databaseChangeLog>
