@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package station;
+
+option java_multiple_files = true;
+option java_package = "com.anor.station.grpc";
+option java_outer_classname = "StationProto";
+
+service StationService {
+  rpc ListNearbyStations (NearbyRequest) returns (StationList);
+  rpc GetStation (StationIdRequest) returns (StationDetails);
+}
+
+message NearbyRequest {
+  double lat = 1;
+  double lng = 2;
+  double radius_meters = 3;
+}
+
+message StationIdRequest {
+  string station_id = 1;
+}
+
+message StationList {
+  repeated StationSummary stations = 1;
+}
+
+message StationSummary {
+  string id = 1;
+  string name = 2;
+  double lat = 3;
+  double lng = 4;
+  int32 available_power_banks = 5;
+  int32 free_slots = 6;
+  double distance_meters = 7;
+}
+
+message StationDetails {
+  string id = 1;
+  string name = 2;
+  double lat = 3;
+  double lng = 4;
+  string status = 5;
+  int32 total_slots = 6;
+  repeated SlotInfo slots = 7;
+}
+
+message SlotInfo {
+  int32 slot_number = 1;
+  string status = 2;
+  string power_bank_id = 3;
+  int32 charge_level = 4;
+}

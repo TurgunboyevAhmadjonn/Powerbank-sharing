@@ -1,0 +1,67 @@
+# db/changelog/changes/001-init.yaml
+databaseChangeLog:
+  - changeSet:
+      id: 001-create-station
+      author: anor
+      changes:
+        - createTable:
+            tableName: station
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: name, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: lat, type: double precision, constraints: { nullable: false } }
+              - column: { name: lng, type: double precision, constraints: { nullable: false } }
+              - column: { name: status, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: total_slots, type: int, constraints: { nullable: false } }
+              - column: { name: created_at, type: TIMESTAMPTZ, constraints: { nullable: false } }
+
+        - createTable:
+            tableName: power_bank
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: serial, type: varchar(64), constraints: { nullable: false, unique: true } }
+              - column: { name: charge_level, type: int, constraints: { nullable: false } }
+              - column: { name: status, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: version, type: bigint, constraints: { nullable: false }, defaultValueNumeric: 0 }
+
+        - createTable:
+            tableName: slot
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: station_id, type: uuid, constraints: { nullable: false } }
+              - column: { name: slot_number, type: int, constraints: { nullable: false } }
+              - column: { name: status, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: power_bank_id, type: uuid }
+
+        - addForeignKeyConstraint:
+            baseTableName: slot
+            baseColumnNames: station_id
+            referencedTableName: station
+            referencedColumnNames: id
+            constraintName: fk_slot_station
+
+        - addForeignKeyConstraint:
+            baseTableName: slot
+            baseColumnNames: power_bank_id
+            referencedTableName: power_bank
+            referencedColumnNames: id
+            constraintName: fk_slot_power_bank
+
+        - addUniqueConstraint:
+            tableName: slot
+            columnNames: station_id, slot_number
+            constraintName: uq_slot_station_number
+
+        # Indexes: see DECISIONS.md for rationale
+        - createIndex:
+            tableName: slot
+            indexName: idx_slot_station_status
+            columns:
+              - column: { name: station_id }
+              - column: { name: status }
+
+        - createIndex:
+            tableName: station
+            indexName: idx_station_status
+            columns:
+              - column: { name: status }
