@@ -1,5 +1,6 @@
-package com.anor.station.domain;
+package com.anor.station.entity;
 
+import com.anor.station.domain.StationStatus;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.OffsetDateTime;
@@ -36,4 +37,3 @@ public class Station {
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 }
-

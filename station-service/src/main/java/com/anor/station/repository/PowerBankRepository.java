@@ -1,6 +1,6 @@
 package com.anor.station.repository;
 
-import com.anor.station.domain.PowerBank;
+import com.anor.station.entity.PowerBank;
 import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.*;
 

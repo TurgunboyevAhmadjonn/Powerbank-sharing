@@ -1,8 +1,8 @@
 // src/main/java/com/anor/station/service/StationDomainService.java
 package com.anor.station.service;
 
-import com.anor.station.domain.Slot;
-import com.anor.station.domain.Station;
+import com.anor.station.entity.Slot;
+import com.anor.station.entity.Station;
 import com.anor.station.repository.SlotRepository;
 import com.anor.station.repository.StationRepository;
 import lombok.RequiredArgsConstructor;

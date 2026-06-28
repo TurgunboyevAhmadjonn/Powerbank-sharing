@@ -1,5 +1,6 @@
-package com.anor.station.domain;
+package com.anor.station.entity;
 
+import com.anor.station.domain.SlotStatus;
 import jakarta.persistence.*;
 import lombok.*;
 import java.util.UUID;
@@ -29,4 +30,3 @@ public class Slot {
     @JoinColumn(name = "power_bank_id")
     private PowerBank powerBank;
 }
-

@@ -1,7 +1,10 @@
 // service/DispenseService.java
 package com.anor.station.service;
 
-import com.anor.station.domain.*;
+import com.anor.station.domain.PowerBankStatus;
+import com.anor.station.domain.SlotStatus;
+import com.anor.station.entity.PowerBank;
+import com.anor.station.entity.Slot;
 import com.anor.station.event.*;
 import com.anor.station.kafka.StationEventPublisher;
 import com.anor.station.repository.*;
@@ -109,4 +112,3 @@ public class DispenseService {
                 cmd.rentalId(), cmd.stationId(), null, null, reason, OffsetDateTime.now());
     }
 }
-
