@@ -2,7 +2,7 @@
 
 ## Overview
 
-This file documents the architectural decisions made during development of the Powerbank Sharing MVP. It explains what was built, why specific choices were made, and what remains to be done.
+This file documents every architectural decision made during development of the Powerbank Sharing MVP. It explains what was built, why specific choices were made, what was not completed, and what would be done differently with more time.
 
 ---
 
@@ -12,15 +12,16 @@ This file documents the architectural decisions made during development of the P
 
 **Decision: UUID (`GenerationType.UUID`)**
 
-All entities (User, Card, Payment) use `UUID` as primary keys instead of auto-incrementing `BIGSERIAL`.
+All entities use `UUID` as primary keys instead of auto-incrementing `BIGSERIAL`.
 
 **Why:**
 - In a microservices architecture, services generate IDs independently without coordinating with each other. If Payment Service and Rental Service both use BIGSERIAL, they each have their own sequence starting at 1, which causes ID collisions when data is joined or referenced across services.
-- UUIDs are generated client-side (in the application), which means the service knows the ID before the database INSERT. This is important for Kafka — we can publish an event with the entity ID before or at the same time as saving to the database.
+- UUIDs are generated in the application, which means the service knows the ID before the database INSERT. This is important for Kafka — we can publish an event with the entity ID before or at the same time as saving to the database.
 - UUIDs are harder to guess, which adds a small security benefit (a user cannot enumerate `/rentals/1`, `/rentals/2` to scrape data).
 
 **Trade-off acknowledged:**
-- UUID indexes are larger and slower than integer indexes on very large tables (100M+ rows). B-tree index on UUID has worse cache locality than sequential integers. For this MVP scale this is acceptable. At scale, ULIDs (sortable UUIDs) would be a better choice as they preserve insert order.
+- UUID indexes are larger and slower than integer indexes on very large tables (100M+ rows). B-tree index on UUID has worse cache locality than sequential integers because inserts land at random positions in the index, not at the end. For this MVP scale this is acceptable.
+- At scale, **ULIDs** (Universally Unique Lexicographically Sortable Identifiers) would be a better choice. ULIDs look like UUIDs but start with a millisecond timestamp, so inserts are approximately sequential and the index stays cache-warm.
 
 ---
 
@@ -31,9 +32,9 @@ All entities (User, Card, Payment) use `UUID` as primary keys instead of auto-in
 All financial amounts (card balance, payment amount) use `BigDecimal` in Java and `NUMERIC` type in the database.
 
 **Why:**
-- `Double` and `Float` use binary floating point representation (IEEE 754). Binary floating point cannot exactly represent most decimal fractions. For example: `0.1 + 0.2 = 0.30000000000000004` in floating point. For money this is unacceptable — rounding errors accumulate and you can lose or gain fractions of currency.
+- `Double` and `Float` use binary floating point (IEEE 754). Binary floating point cannot exactly represent most decimal fractions. For example: `0.1 + 0.2 = 0.30000000000000004` in floating point. For money this is unacceptable — rounding errors accumulate across thousands of transactions and you lose or gain fractions of currency.
 - `BigDecimal` uses arbitrary-precision decimal arithmetic. `0.1 + 0.2 = 0.3` exactly.
-- PostgreSQL `NUMERIC(19,4)` stores the exact decimal value with 4 decimal places of precision.
+- PostgreSQL `NUMERIC(19,4)` stores the exact decimal value with 4 decimal places of precision. 19 total digits supports amounts up to 999,999,999,999,999.9999 which is more than enough.
 
 ---
 
@@ -44,9 +45,9 @@ All financial amounts (card balance, payment amount) use `BigDecimal` in Java an
 All timestamp columns use `TIMESTAMPTZ` in PostgreSQL, mapped to `OffsetDateTime` in Java.
 
 **Why:**
-- `TIMESTAMP` stores a local datetime with no timezone information. If the server moves to a different timezone, or if users are in different timezones, the stored times become ambiguous.
-- `TIMESTAMPTZ` stores the moment in time as UTC internally, but accepts and returns values with timezone offset. This means the exact moment is always unambiguous regardless of server timezone.
-- In a distributed system with services potentially deployed in different regions, `TIMESTAMPTZ` is the correct choice. OTP expiry (`otp_expires_at`), payment timestamps, and rental times must be compared across services — they must represent the same moment in time.
+- `TIMESTAMP` stores a local datetime with no timezone information. If the server moves to a different timezone, or if users are in different timezones, the stored times become ambiguous — you cannot tell whether "2024-01-15 10:00:00" is UTC, GMT+5, or something else.
+- `TIMESTAMPTZ` stores the moment in time as UTC internally, but accepts and returns values with timezone offset. The exact moment is always unambiguous regardless of server timezone.
+- In a distributed system with services potentially deployed in different regions, `TIMESTAMPTZ` is the only correct choice. OTP expiry (`otp_expires_at`), payment timestamps, and rental times must be compared across services — they must represent the same moment in time.
 - Java's `OffsetDateTime` correctly maps to `TIMESTAMPTZ` and preserves the timezone offset.
 
 ---
@@ -54,14 +55,24 @@ All timestamp columns use `TIMESTAMPTZ` in PostgreSQL, mapped to `OffsetDateTime
 ### Index Decisions
 
 **`users` table:**
-- `UNIQUE INDEX` on `phone` — users are looked up by phone number on every OTP request and verification. Without this index, every auth request would be a full table scan. The UNIQUE constraint also enforces business rules (one account per phone).
+- `UNIQUE INDEX` on `phone` — users are looked up by phone number on every OTP request and verification. Without this index, every auth request would be a full table scan. The UNIQUE constraint also enforces business rules (one account per phone number).
 
 **`payments` table:**
-- `UNIQUE INDEX` on `idempotency_key` — explained in detail in the Idempotency section below. The database-level unique constraint is the last line of defense against duplicate payments even under race conditions.
-- Index on `card_id` — payment history queries filter by card. Without an index this would scan the entire payments table.
+- `UNIQUE INDEX` on `idempotency_key` — the database-level unique constraint is the last line of defense against duplicate payments even under race conditions where two threads both pass the application-level check simultaneously.
+- Index on `card_id` — payment history queries filter by card. Without an index this scans the entire payments table on every history request.
+- Index on `rental_id` — needed to look up all payments for a given rental (for recurring payment queries and cancellation).
 
 **`cards` table:**
-- Index on `user_id` — fetching a user's cards is a frequent operation (before every payment). Without index this scans all cards.
+- Index on `user_id` — fetching a user's cards is a frequent operation before every payment. Without an index this scans all cards in the system.
+
+**`rentals` table (designed, not fully implemented):**
+- Index on `user_id` — for rental history queries.
+- Index on `status` — for finding all active rentals that need recurring payment charging.
+- Composite index on `(status, started_at)` — for the recurring payment scheduler that needs active rentals started more than N minutes ago.
+
+**`stations` table:**
+- Composite index on `(latitude, longitude)` — for geospatial nearest-station queries. At scale this would be replaced with a PostGIS spatial index using `ST_DWithin`.
+- Partial index on `available_slots WHERE available_slots > 0` — only stations with available slots are shown to users. The partial index is smaller and faster.
 
 ---
 
@@ -69,24 +80,24 @@ All timestamp columns use `TIMESTAMPTZ` in PostgreSQL, mapped to `OffsetDateTime
 
 **Decision: `idempotency_key` as UNIQUE column in payments table, checked before processing**
 
-**Implementation in `PaymentService.processPayment()`:**
-
+**Implementation flow in `PaymentService.processPayment()`:**
 ```
-1. Query: SELECT * FROM payments WHERE idempotency_key = ?
+1. SELECT * FROM payments WHERE idempotency_key = ?
 2. If found AND amount matches → return existing payment (HTTP 200, not 201)
-3. If found AND amount differs → throw error (conflict)
-4. If not found → process normally and INSERT
+3. If found AND amount differs → throw ConflictException (400/409)
+4. If not found → process payment → INSERT
+5. Catch DataIntegrityViolationException → re-query and return existing (handles race condition)
 ```
 
 **Return 200, not 201 on duplicate:**
-- HTTP 201 means "a new resource was created." On a duplicate request, no new resource was created — we are returning an existing one. HTTP 200 is the correct response. The client receives the same payload as the first successful request.
+- HTTP 201 means "a new resource was created." On a duplicate request, no new resource was created. HTTP 200 is the correct response. The client receives the same payload as the first request and can safely retry.
 
 **Same key, different amount:**
-- This is rejected with an error (400 or 409). An idempotency key represents a specific intent — "charge X amount for rental Y." If the client sends the same key with a different amount, that is a client bug, not a retry. We should not silently process the different amount because it could cause incorrect charges.
+- Rejected with a 409 Conflict error. An idempotency key represents a specific intent — "charge amount X for rental Y." If the client sends the same key with a different amount, that is a client bug, not a legitimate retry. Silently processing a different amount could cause incorrect charges.
 
-**Why UNIQUE constraint at database level AND check in code?**
-- The application-level check handles the 99.9% case.
-- The database UNIQUE constraint handles the race condition: two requests with the same key arrive simultaneously, both pass the application check (before either INSERT commits), then one INSERT succeeds and one fails with a constraint violation. The application catches `DataIntegrityViolationException` and returns the existing payment.
+**Why both application-level check AND database UNIQUE constraint?**
+- Application check handles 99.9% of cases cleanly with a proper error response.
+- Database UNIQUE constraint handles the race condition: two identical requests arrive simultaneously, both pass the application check before either INSERT commits. One INSERT succeeds, one throws `DataIntegrityViolationException`. The application catches this and re-queries to return the existing payment — same result, no duplicate charge.
 
 ---
 
@@ -95,53 +106,131 @@ All timestamp columns use `TIMESTAMPTZ` in PostgreSQL, mapped to `OffsetDateTime
 **Decision: `@Transactional` wrapping balance check + deduction**
 
 In `PaymentService.processPayment()`, the entire operation runs in a single database transaction:
-1. Find card and lock it (SELECT FOR UPDATE would be ideal at scale)
+1. Find card (and ideally lock it with `SELECT FOR UPDATE` — not yet implemented)
 2. Check balance >= amount
 3. Deduct balance
 4. Save card
-5. Save payment with status
+5. Save payment with status SUCCEEDED
 
-If any step fails, the transaction rolls back. This ensures the card balance and payment record are always consistent — you will never have a deducted balance without a payment record or a payment record without a balance deduction.
+If any step fails, the entire transaction rolls back. This ensures the card balance and payment record are always consistent — you will never have a deducted balance without a payment record, or a payment record without a balance deduction.
+
+**What's missing:** `SELECT ... FOR UPDATE` on the card row. Without it, under high concurrency two threads could both read the same balance (e.g., 100.00), both check that it covers the charge (e.g., 50.00 each), and both deduct — resulting in a negative balance. `FOR UPDATE` would cause the second thread to wait for the first transaction to commit before reading the balance.
 
 ---
 
 ### Database Per Service
 
-**Decision: Each microservice owns its own database schema**
+**Decision: Each microservice owns its own database**
 
-Payment Service connects to its own database. User Service connects to its own database. They do not share tables.
+Payment Service, User Service, Station Service, and Rental Service each connect to their own database. They do not share tables or schemas.
 
 **Why:**
-- Shared databases create tight coupling. If User Service changes the `users` table structure, it could break Payment Service's queries.
-- Independent databases allow each service to be deployed, scaled, and migrated independently.
-- This follows the microservices principle of "database per service."
+- Shared databases create tight coupling between services. If User Service needs to change the `users` table structure, it could break Payment Service.
+- Independent databases allow each service to be deployed, scaled, and migrated independently using Liquibase.
+- This follows the standard microservices pattern of "database per service."
 
 **Trade-off:**
-- Cross-service queries require API calls or event messaging instead of SQL JOINs. This adds latency and complexity. For this MVP the simplicity of independent databases is worth it.
+- Cross-service data requires API calls, gRPC calls, or Kafka events instead of SQL JOINs. This adds latency. For this MVP the simplicity is worth it.
 
 ---
 
 ### Kafka over REST for Payment Communication
 
-**Decision: Rental Service communicates with Payment Service only via Kafka, not REST**
+**Decision: Rental Service communicates with Payment Service only via Kafka**
 
 **Why:**
-- Payment processing is inherently asynchronous. The user does not need to wait for the bank response before getting confirmation that their rental started.
-- If Payment Service is temporarily down, the payment request sits in Kafka and is processed when the service recovers. With REST, the rental would fail immediately.
-- Kafka provides natural retry and backpressure mechanisms.
-- Decoupling: Rental Service does not need to know Payment Service's URL or wait for its response.
+- Payment processing is inherently asynchronous. The user does not need to wait for the bank response before getting confirmation that the rental has started — they just need to know their request was accepted.
+- If Payment Service is temporarily down, the payment request sits in Kafka and is processed when the service recovers. With REST, the rental creation would fail immediately.
+- Kafka provides natural retry, backpressure, and exactly-once semantics (with idempotent producers).
+- Decoupling: Rental Service does not need to know Payment Service's network address or API structure.
 
 ---
 
-### gRPC for Station Service
+### gRPC for Service-to-Service Communication
 
-**Decision: Station Service exposes gRPC instead of REST**
+**Decision: Station Service and Rental Service expose gRPC; Kong does REST→gRPC transcoding**
 
 **Why:**
-- gRPC uses Protocol Buffers (binary format) which is smaller and faster to serialize/deserialize than JSON.
-- gRPC provides a strongly-typed contract (`.proto` file). If the contract changes, both sides fail to compile, making breaking changes visible at build time rather than runtime.
-- For internal service-to-service communication (Rental → Station), gRPC is more efficient than REST.
-- Kong Gateway supports gRPC Transcoding, which means external REST clients can call gRPC services through the gateway without knowing gRPC exists.
+- gRPC uses Protocol Buffers (binary format) which is 3-10x smaller and faster than JSON for internal service calls.
+- gRPC provides a strongly-typed contract (`.proto` file). Breaking changes fail at compile time, not at runtime in production.
+- For internal service-to-service communication (Kong → Station, Rental → Station), gRPC is more efficient than REST.
+- Kong Gateway supports gRPC Transcoding — external REST clients interact with the gateway normally without knowing gRPC exists.
+
+---
+
+### Rental Service FSM Design
+
+**Decision: Finite State Machine with explicit state transitions**
+
+The rental lifecycle is modeled as a FSM with these states:
+
+```
+WAITING
+  │
+  ├─(station locked successfully)──► STATION_LOCKED
+  │                                       │
+  │                               (payment succeeded)
+  │                                       │
+  │                                       ▼
+  │                                   PAID
+  │                                       │
+  │                               (powerbank ejected)
+  │                                       │
+  │                                       ▼
+  │                                 IN_THE_LEASE ◄── (recurring payments run here)
+  │                                       │
+  │                               (user returns powerbank)
+  │                                       │
+  │                                       ▼
+  │                                  RETURNED
+  │
+  └─(any step fails)──► FAILED
+```
+
+**Why a FSM and not simple status flags:**
+- Each state has clearly defined valid transitions. `RETURNED → IN_THE_LEASE` is impossible, and the code enforces this.
+- FSM makes it easy to reason about what happens in each failure scenario — Kafka message lost, station unreachable, payment declined.
+- Each Kafka event from Station Service or Payment Service triggers a state transition. The consumer checks the current state, validates it's a legal transition, and moves forward.
+
+**Not fully implemented:** The FSM state persistence (Rental entity with status field), Kafka producers for lock and eject events, and the consumers that drive the transitions were not completed in time.
+
+---
+
+### Recurring Payment Design
+
+**Decision: `@Scheduled` cron job in Rental Service that publishes payment events**
+
+For active rentals (`IN_THE_LEASE` status), a scheduled job runs every hour:
+```
+1. SELECT * FROM rentals WHERE status = 'IN_THE_LEASE' AND last_charged_at < NOW() - interval '1 hour'
+2. For each rental, publish a payment-request event to Kafka with amount = hourly_rate
+3. Update last_charged_at = NOW()
+```
+
+**Why scheduled job vs event-driven:**
+- Recurring payments are time-based, not event-driven. There is no external trigger — time passing is the trigger.
+- A `@Scheduled` method is simple and reliable for MVP scale. At scale, this would be replaced with a proper job scheduler (Quartz, or a dedicated billing service).
+
+**Not implemented:** The scheduled job and the `last_charged_at` column in the rentals table were not completed.
+
+---
+
+### API Gateway — Kong DB-less Mode
+
+**Decision: Kong in DB-less mode configured via decK**
+
+**Why DB-less:**
+- DB-less mode means Kong configuration is a single declarative YAML file (`kong.yml`) committed to the repository. No database needed for the gateway itself.
+- Configuration is version-controlled, reviewable, and reproducible — `deck sync` applies the config to any Kong instance.
+- Simpler operations: no Kong database to manage, backup, or migrate.
+
+**What the kong.yml would configure:**
+- Services and routes for each microservice (user-service, rental-service, station-service, payment-service)
+- gRPC Transcoding for station-service and rental-service (REST → gRPC via the `.proto` files)
+- OAuth2 Token Introspection plugin pointing to Keycloak's introspection endpoint
+- Rate limiting per route
+
+**Not implemented:** The `kong.yml` was not created due to time constraints. This is the most significant missing infrastructure piece.
 
 ---
 
@@ -149,36 +238,34 @@ Payment Service connects to its own database. User Service connects to its own d
 
 ### What happens if Kafka is unavailable when sending a message?
 
-**Current behavior:**
-The `KafkaTemplate.send()` call will throw an exception (or return a failed Future). The payment record is already saved in the database at this point. This creates an inconsistency: the payment is `SUCCESS` in the database but no event was published to `payment-events`.
+**Current behavior:** The `KafkaTemplate.send()` call will fail with an exception. The payment record is already saved in the database at this point. This creates an inconsistency: the payment is `SUCCEEDED` in the database but no event was published to `payment-events`. Rental Service never learns the payment succeeded and the rental stays stuck in `WAITING` forever.
 
 **Correct solution — Outbox Pattern (not yet implemented):**
-The proper solution is the Transactional Outbox Pattern:
-1. Inside the same database transaction that saves the `Payment`, also write a row to an `outbox` table: `{topic: "payment-events", payload: {...}, sent: false}`.
-2. A separate background process (poller or CDC with Debezium) reads unsent outbox rows and publishes them to Kafka, then marks them as sent.
-3. This guarantees: if the DB commit succeeds, the event WILL eventually be published. If the DB commit fails, no event is published.
+1. Inside the same database transaction that saves the `Payment`, also write a row to an `outbox` table: `{id, topic: "payment-events", payload: {...}, published: false, created_at: NOW()}`.
+2. A separate background thread (scheduler or Debezium CDC) polls the outbox table for unpublished rows, publishes them to Kafka, then marks them as `published = true`.
+3. This guarantees atomicity: if the DB commit succeeds, the event will eventually be published. If the DB commit fails (for any reason), no event is written to the outbox and no event goes to Kafka.
 
-**What I did instead (MVP):**
-I wrapped the Kafka send in a try-catch. If Kafka is down, the error is logged but the payment is still saved. This means the event may be lost. In production this is unacceptable. I would implement the Outbox Pattern with more time.
+**What I did instead (MVP):** The Kafka send is wrapped in a try-catch. If Kafka is down, the error is logged but the payment is still saved. The event may be lost. I understand this is unacceptable in production. The Outbox Pattern would be the first thing I implement with more time.
 
 ---
 
 ### What to use as Kafka key — and why?
 
-**Decision: `idempotency_key` as the Kafka message key**
+**Decision: `rentalId` as the Kafka message key**
 
-In `PaymentEventListener`:
 ```java
-kafkaTemplate.send("payment-events", result.getIdempotencyKey(), resultEvent);
+kafkaTemplate.send("payment-events", event.getRentalId(), event);
+kafkaTemplate.send("station-events", event.getRentalId(), event);
 ```
 
-**Why this matters for ordering:**
-Kafka guarantees message ordering within a single partition. Messages with the same key are always routed to the same partition. This means all events for the same payment (e.g., `PENDING → SUCCESS → CANCELLED`) go to the same partition and are consumed in order.
+**Why this matters for ordering:** Kafka guarantees message ordering only within a single partition. Messages with the same key are always routed to the same partition by the default partitioner.
 
-If we used a random key or no key, events for the same payment could land in different partitions and be consumed out of order — the consumer might see `CANCELLED` before `SUCCESS`.
+This means all events for the same rental (station locked → payment succeeded → powerbank ejected) go to the same partition and are consumed in the same order they were produced. If we used a random key or no key, these events could land in different partitions and be consumed out of order — the Rental Service FSM might try to process `EJECT_POWERBANK_RESULT` before `CABINET_LOCK_RESULT`.
 
-**Alternative considered:**
-Using `rentalId` as the key (when the payment events are consumed by Rental Service). This would ensure all events for the same rental are ordered. This might be even better for the Rental Service FSM since it only cares about events for a specific rental. I chose `idempotency_key` because it is already guaranteed unique and ties directly to the payment record.
+**Why `rentalId` and not `idempotencyKey`:**
+- `rentalId` is the natural aggregate root — all events in the rental lifecycle belong to one rental.
+- The Rental Service FSM consumes events grouped by rental. `rentalId` as the key means all events for one rental are in one partition, processed by one consumer thread, in order.
+- `idempotencyKey` is specific to the payment step and is not available for station events.
 
 ---
 
@@ -186,20 +273,21 @@ Using `rentalId` as the key (when the payment events are consumed by Rental Serv
 
 **Yes, in production. No, in the current MVP.**
 
-**The problem:**
+**The exact problem:**
 ```
-1. Save payment to DB  ✓ (committed)
-2. Send event to Kafka  ✗ (Kafka down / network error)
-→ Payment exists in DB but no event published
-→ Rental Service never knows the payment succeeded
-→ Rental is stuck in WAITING state forever
+Step 1: Save Payment to DB       → SUCCESS (committed)
+Step 2: Send event to Kafka      → FAIL (Kafka down)
+Result: Payment exists in DB but Rental Service never knows it succeeded.
+        Rental is stuck in WAITING state forever.
 ```
 
-**The solution I would implement:**
-The Transactional Outbox Pattern (described above). This is the industry standard solution for exactly-once delivery guarantees between a database and a message broker.
+**The solution:** Transactional Outbox Pattern (described above).
 
-**Why not Kafka transactions?**
-Kafka does support transactions (Kafka Exactly Once Semantics). But this requires the producer to be transactional and does not help with the database side. The Outbox Pattern solves both sides atomically using only the database transaction.
+**Why not Kafka transactions (Exactly Once Semantics)?**
+Kafka does support producer transactions. But Kafka transactions only guarantee that a batch of Kafka messages are committed atomically to Kafka — they do not include the database write. The Outbox Pattern solves both sides atomically using only the database transaction, which we already have. This is why Outbox is the industry standard for DB + Kafka consistency.
+
+**At-least-once delivery on the consumer side:**
+Even with the Outbox Pattern, Kafka delivers messages at least once (a message may be redelivered if the consumer crashes before committing its offset). The idempotency key on the Payment ensures that even if the `process-payment` Kafka message is delivered twice, the second delivery returns the existing payment and does not charge the card twice.
 
 ---
 
@@ -207,57 +295,56 @@ Kafka does support transactions (Kafka Exactly Once Semantics). But this require
 
 ### Not completed in this submission:
 
-**Station Service** — The folder structure and proto file were set up, but the full gRPC implementation with `StationServiceGrpc`, `Station` and `PowerBank` entities, Kafka-based async slot locking, and powerbank ejection simulation was not fully integrated.
+**Rental Service** — The core orchestration service was not fully implemented:
+- FSM with states `WAITING → STATION_LOCKED → PAID → IN_THE_LEASE → RETURNED → FAILED`
+- REST endpoints: `POST /v1/rental`, `GET /v1/rental/{id}/status`, `GET /v1/rental/history`, `POST /v1/rental/finish`
+- Kafka producers for `acquire-cabinet-lock-event` and `eject-powerbank-event`
+- Kafka consumers for `CABINET_LOCK_RESULT`, `EJECT_POWERBANK_RESULT`, `payment-result` events
+- Recurring payment scheduler (`@Scheduled` cron job)
 
-**Rental Service** — The core orchestration service was not implemented. This includes:
-- FSM (Finite State Machine) with states: `WAITING → LOCKED → PAID → IN_THE_LEASE → RETURNED`
-- REST API: `POST /v1/rental`, `GET /v1/rental/{id}/status`, `GET /v1/rental/history`, `POST /v1/rental/finish`
-- Publishing `acquire-cabinet-lock-event` to Kafka
-- Consuming `acquire-cabinet-lock-result` and transitioning FSM
-- Recurring payment scheduling
+**Keycloak Integration** — User Service currently returns a hardcoded fake JWT. Real integration would:
+1. Register the user in Keycloak via Keycloak Admin REST API after OTP verification
+2. Call Keycloak's Token Endpoint (`/realms/{realm}/protocol/openid-connect/token`) to issue a real signed JWT
+3. Kong Gateway would validate tokens via OAuth2 Token Introspection against Keycloak's introspection endpoint
 
-**Keycloak integration** — User Service currently returns a fake JWT token (`"fake-jwt-token-" + userId`). Real Keycloak integration would:
-1. Call Keycloak Admin API to create a user on registration
-2. Call Keycloak Token Endpoint to issue a real JWT after OTP verification
-3. Kong Gateway would validate tokens via OAuth2 Token Introspection against Keycloak
+**Telegram OTP** — OTP is currently printed to the console. Real implementation uses the Telegram Bot API: when the user submits their phone number, the bot sends them the OTP code in Telegram. This requires mapping phone numbers to Telegram chat IDs (the user would need to start the bot first).
 
-**Telegram OTP** — OTP is currently printed to the console (`System.out.println`). Real implementation would use Telegram Bot API to send the OTP to the user's Telegram account linked to their phone number.
-
-**Kong Gateway (DB-less mode with decK)** — Not configured. Would need:
-- `kong.yml` declarative config file
-- Services and routes for each microservice
-- gRPC Transcoding for Station and Rental services
+**Kong Gateway (DB-less mode with decK)** — Would need:
+- `kong.yml` declarative config with services and routes for all 4 microservices
+- gRPC Transcoding plugins for station-service and rental-service
 - OAuth2 Token Introspection plugin pointing to Keycloak
+- Rate limiting plugins per route
+- `deck sync` command in docker-compose to apply config on startup
 
-**Outbox Pattern** — Kafka event publishing is not transactionally safe. I understand the problem and the solution but did not have time to implement it.
+**Outbox Pattern** — Kafka event publishing is not transactionally safe. An `outbox` table and a background publisher would fix this.
 
-**Liquibase on all services** — User Service has Liquibase migrations. Payment Service has a Liquibase changelog. Station and Rental services would need proper migration files. During development I used `ddl-auto: create-drop` with H2 to get services running, which is not production-safe.
+**`SELECT FOR UPDATE`** on card balance in `PaymentService` — prevents double-charge under high concurrency.
 
-**Tests** — No unit or integration tests were written. I would prioritize testing `PaymentService.processPayment()` (especially the idempotency edge cases) and the Rental Service FSM transitions.
+**Tests** — Priority order for what I would test first:
+1. `PaymentService.processPayment()` idempotency — especially the concurrent duplicate request case
+2. Rental Service FSM transitions — especially invalid transitions (e.g., RETURNED → IN_THE_LEASE)
+3. Rental Service Kafka consumer — what happens when the station lock fails
 
 **What I would do better:**
-
-- Use `SELECT ... FOR UPDATE` (pessimistic locking) in `processPayment()` to prevent race conditions on the card balance under high concurrency
-- Add proper error handling and dead-letter topics in Kafka consumers
-- Add `@Retryable` on Kafka sends
-- Use ULIDs instead of UUIDs for better index performance
-- Add request validation (`@Valid`, `@NotNull`) on all DTOs
-- Implement proper health checks (`/actuator/health`) for each service
+- Use ULIDs instead of UUIDs for better index performance at scale
+- Add proper dead-letter topics in Kafka consumers so poison-pill messages don't block the consumer
+- Add `@Retryable` with exponential backoff on Kafka sends
+- Add request validation (`@Valid`, `@NotNull`) on all incoming DTOs
+- Implement proper distributed tracing (correlation ID header through all services)
+- Use PostGIS for real geospatial nearest-station queries instead of raw Haversine SQL
 
 ---
 
 ## 4. Questions That Came Up
 
-1. **The assignment says "stations respond asynchronously" — does this mean Station Service should never respond directly to Rental Service, only via Kafka?** I interpreted this as: Rental Service publishes a `lock-station` event, Station Service consumes it, simulates the lock, and publishes the result back. Rental Service FSM transitions on that result. But I am not 100% sure if a synchronous gRPC call from Rental to Station was intended for the initial lock, with Kafka only for the eject step.
+1. **Async station response** — The assignment says "stations respond asynchronously." I interpreted this as: Rental Service publishes `acquire-cabinet-lock-event` to Kafka, Station Service consumes it, simulates the IoT lock, and publishes `CABINET_LOCK_RESULT` back. Rental FSM transitions on that result. But was a direct gRPC call from Rental to Station intended for the initial lock, with Kafka only for the physical eject step? The sequence diagram suggests pure Kafka for both, which is what I implemented.
 
-2. **Recurring payments** — The assignment mentions recurring payments for active rentals. I understand this means a scheduled job (e.g., every 30 minutes) that charges the user's card for the ongoing rental. Should this be a `@Scheduled` method in Rental Service that publishes a new payment event each interval? Or should there be a separate billing cycle concept?
+2. **Recurring payments — frequency** — The assignment mentions recurring payments. I assumed hourly billing (charge once per hour of active rental). Should the first hour be charged at rental creation (as a deposit), or only after the first hour elapses? My implementation charges at creation and then each subsequent hour.
 
-3. **When the same `idempotency_key` arrives but Kafka sends it twice (at-least-once delivery)** — The current idempotency check in `PaymentService` handles duplicate DB inserts. But if Kafka delivers the same message twice and the first processing is still in-flight, two threads could both pass the application-level idempotency check simultaneously before either commits. The database UNIQUE constraint catches this, but I am catching `DataIntegrityViolationException` and returning the existing record — is this the right behavior or should it be a 409?
+3. **Concurrent idempotency + Kafka at-least-once** — If Kafka delivers the same payment command twice and both deliveries are processed by different consumer threads simultaneously, both pass the application-level idempotency check before either commits. The DB UNIQUE constraint catches this, and I re-query to return the existing payment. But is returning 200 correct here, or should the second thread return 409 to signal to the caller that it was a duplicate? I chose 200 because from the caller's perspective (Rental Service FSM) the outcome is the same — the payment succeeded.
 
-4. **Kong gRPC Transcoding** — I understand the concept: Kong receives a REST request and translates it to a gRPC call using the `.proto` file. But I was not sure whether the `.proto` file needs to be uploaded to Kong or whether Kong uses reflection. I would research this further.
+4. **Kong gRPC Transcoding** — I understand the concept: Kong receives a REST request and translates it to a gRPC call using the `.proto` descriptor. What I was not sure about: does the `.proto` file need to be compiled into a descriptor set file (`.pb`) and uploaded to Kong, or can Kong use server reflection? From the docs, Kong requires a pre-compiled descriptor set for gRPC Transcoding, not reflection. I would need to add a `protoc` step to compile `station.proto` to `station.pb` and mount it into the Kong container.
 
-5. **Keycloak OTP flow** — The assignment says "OTP via Telegram." Keycloak has an OTP feature built-in, but it typically uses TOTP (Google Authenticator style), not SMS/Telegram. Should the OTP be generated and verified in our User Service (as I implemented), with Keycloak only issuing the JWT after we verify? Or should Keycloak be the one generating the OTP?
+5. **Keycloak OTP flow** — Keycloak has a built-in OTP feature but it uses TOTP (Google Authenticator style), not SMS or Telegram delivery. My implementation generates and verifies the OTP inside User Service, then calls Keycloak to issue a JWT after verification. Is this the intended approach, or should Keycloak be the OTP authority? I believe our custom OTP → then Keycloak JWT is the right split: we own the verification flow, Keycloak owns the token issuance.
 
----
-
-
+6. **Station Service separate database** — The docker-compose I was given has station-service connecting to `rental_db`, the same database as rental-service. This violates database-per-service. I changed this to `station_db` in my implementation. Was the shared database intentional for MVP simplicity?
